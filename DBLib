@@ -1,0 +1,71 @@
+<?php
+
+class DBLib {
+    private $conn = null;
+    private $db = null;
+    public function DBLib ($host, $username, $password, $database) {
+        $this->conn = new PDO("mysql:host=$host;dbname=information_schema", $username, $password);
+        $this->db = $database;
+        $this->conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    }
+
+    public function getPDO() {
+        return $this->conn;
+    }
+
+    public function selectAll($sql) {
+        $stsm = $this->conn->query($sql);
+        return $stsm->fetchAll();
+    }
+
+    public function gen_structure() {
+        $arr  = [];
+        
+        // column
+        $sql = "SELECT * FROM `information_schema`.`COLUMNS` WHERE `TABLE_SCHEMA` = '{$this->db}' order by TABLE_NAME, ORDINAL_POSITION";
+        $data = $this->selectAll($sql);
+        foreach( $data as $item) {
+            $arr[$item['TABLE_NAME']]['columns'][$item['COLUMN_NAME']]['data'] = trim(format_column($item));
+            $arr[$item['TABLE_NAME']]['columns'][$item['COLUMN_NAME']]['pos'] = $item['ORDINAL_POSITION'];
+        }
+
+        // index
+        $sql = "SELECT TABLE_NAME,NON_UNIQUE,INDEX_NAME,group_concat(COLUMN_NAME order by SEQ_IN_INDEX) as columns,INDEX_TYPE
+                FROM `information_schema`.`STATISTICS` 
+                WHERE `TABLE_SCHEMA` = '{$this->db}'
+                GROUP by TABLE_NAME,INDEX_NAME
+                ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX";
+        $data = $this->selectAll($sql);
+        foreach( $data as $item) {
+            $arr[$item['TABLE_NAME']]['index'][$item['INDEX_NAME']] = format_index($item);
+        }
+        // select tables and property
+        $sql = "SELECT TABLE_NAME,ENGINE,TABLE_COLLATION FROM `information_schema`.`TABLES` WHERE `TABLE_SCHEMA` = '{$this->db}'";
+        $data = $this->selectAll($sql);
+        foreach( $data as $item) {
+            $arr[$item['TABLE_NAME']]['property'] = "ENGINE={$item['ENGINE']} DEFAULT COLLATE={$item['TABLE_COLLATION']}";
+        }
+
+        // contraint
+        $sql = "SELECT
+                    kcu.*,
+                    rc.UPDATE_RULE, 
+                    rc.DELETE_RULE
+                FROM
+                    `information_schema`.`KEY_COLUMN_USAGE` AS kcu
+                    INNER JOIN `information_schema`.`REFERENTIAL_CONSTRAINTS` AS rc ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND kcu.TABLE_SCHEMA = rc.CONSTRAINT_SCHEMA
+                WHERE
+                    kcu.CONSTRAINT_SCHEMA = '{$this->db}' AND kcu.REFERENCED_TABLE_SCHEMA = '{$this->db}'";
+        $data = $this->selectAll($sql);
+        foreach( $data as $item) {
+            $arr[$item['TABLE_NAME']]['constraint'][$item['CONSTRAINT_NAME']] = "CONSTRAINT `{$item['CONSTRAINT_NAME']}` " .
+                                                        "FOREIGN KEY (`{$item['COLUMN_NAME']}`) " .
+                                                        "REFERENCES `{$item['REFERENCED_TABLE_NAME']}`(`{$item['REFERENCED_COLUMN_NAME']}`)" .
+                                                        ($item['DELETE_RULE'] != "RESTRICT" ? " ON DELETE {$item['DELETE_RULE']}": "") . 
+                                                        ($item['UPDATE_RULE'] != "RESTRICT" ? " ON DELETE {$item['UPDATE_RULE']}": "");
+        }
+
+        return $arr;
+
+    }
+}
